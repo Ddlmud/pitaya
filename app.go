@@ -27,11 +27,10 @@ import (
 	"reflect"
 	"strings"
 	"syscall"
-
 	"time"
 
 	"github.com/google/uuid"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/spf13/viper"
 	"github.com/topfreegames/pitaya/acceptor"
 	"github.com/topfreegames/pitaya/cluster"
@@ -59,6 +58,7 @@ import (
 )
 
 // ServerMode represents a server mode
+// 服务的模式 主要有集群和单体两种
 type ServerMode byte
 
 const (
@@ -70,24 +70,46 @@ const (
 )
 
 // App is the base app struct
+// 基础app结构
 type App struct {
-	acceptors        []acceptor.Acceptor
-	config           *config.Config
-	configured       bool
-	debug            bool
-	dieChan          chan bool
-	heartbeat        time.Duration
-	onSessionBind    func(*session.Session)
-	messageEncoder   message.Encoder
-	packetDecoder    codec.PacketDecoder
-	packetEncoder    codec.PacketEncoder
-	router           *router.Router
+	// 接收器 类似moat的多个服务  仅提供监听端口 接受链接作用
+	// 目前 pitaya 支持了tcp和websocket等长连接的监听实现。
+	// 易扩展，只需要实现Acceptor接口即可新增接口
+	acceptors []acceptor.Acceptor
+	// pitaya的配置
+	// 易扩展的一种方式，直接引用了开源的viper
+	config *config.Config
+	// 配置状态（是否已完成配置） 避免二次配置导致覆盖
+	configured bool
+	// 是否debug模式 --！虽然有这个东西，但实际项目中并没有对这东西进行直接引用
+	debug bool
+	// 关闭信号，会被传递到某些重要的协程中，如discovery等。
+	// 通过Shutdown函数进行关闭，主协程（main）中会监听关闭信号和dieChan的值
+	// 以便解除main的阻塞，进入关闭流程
+	dieChan chan bool
+	// 心跳的时间间隔
+	heartbeat time.Duration
+	// session绑定的时候的一个回调，钩子函数，但是目前app里面的这个意义不明，无人调用
+	onSessionBind func(*session.Session)
+	// 消息序列化  消息包序列化成二进制（具体的协议为包标识，其他数据【不同的包标识，其他数据格式也不同】）
+	messageEncoder message.Encoder
+	// 包序列化 和messageEncoder的关系为（箭头标识消息顺序）：
+	// msg --> messageEncoder --> packetEncoder --> TCPConn --> packetDecoder --> messageEncoder --> 用户层处理
+	packetDecoder codec.PacketDecoder
+	packetEncoder codec.PacketEncoder
+	// 路由 支持不同服务类型自定义路由 前提是游戏处在不接受网络消息的状态
+	router *router.Router
+	//
 	rpcClient        cluster.RPCClient
 	rpcServer        cluster.RPCServer
 	metricsReporters []metrics.Reporter
-	running          bool
-	serializer       serialize.Serializer
-	server           *cluster.Server
+	// 游戏启动标识  在监听端口之后 才置为true
+	running bool
+	// 数据序列化工具 支持proto、json
+	serializer serialize.Serializer
+	server     *cluster.Server
+	// TODO listen的Session未完全弄清
+	// 服务的模式 主要有集群和单体两种 主要为了区分服务是否是集群中的一部分，会在listen的时候，生成特殊的session
 	serverMode       ServerMode
 	serviceDiscovery cluster.ServiceDiscovery
 	startAt          time.Time
